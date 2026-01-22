@@ -615,8 +615,59 @@ install_erpnext() {
     echo "$domain" > /tmp/erpnext_domain
 
     # Create site and install ERPNext
-    # Use printf to avoid heredoc variable expansion issues
-    printf 'export PATH=$PATH:$HOME/.local/bin\ncd frappe-bench\n\n# Check if site exists\nif [ -d "sites/%s" ]; then\n    echo "Site %s already exists"\nelse\n    # Create new site with secure password transmission\n    echo "%s" | bench new-site %s --mariadb-root-password - --admin-password "%s"\nfi\n\n# Get and install ERPNext if not already\nif [ ! -d "apps/erpnext" ]; then\n    bench get-app erpnext --branch version-15\n    \n    # Install Node.js dependencies for ERPNext\n    cd apps/erpnext\n    yarn install --check-files || yarn install --network-timeout 100000\n    cd ../..\nfi\n\n# Install ERPNext on site\nbench --site %s install-app erpnext || echo "ERPNext may already be installed"\n\n# Set as default site\nbench use %s\n' "$mysql_root_password" "$domain" "$domain" "$mysql_root_password" "$domain" "$admin_password" "$domain" "$domain" | su - "$frappe_user"
+    # Create a temporary script to execute commands properly
+    cat > "/tmp/erpnext_install_${frappe_user}.sh" << EOF
+#!/bin/bash
+set -euo pipefail
+export PATH=\$PATH:\$HOME/.local/bin
+
+# Check if bench directory exists
+if [ ! -d "frappe-bench" ]; then
+    echo "ERROR: frappe-bench directory not found"
+    exit 1
+fi
+
+cd frappe-bench
+
+# Check if site exists and is valid
+site_exists=false
+if [ -d "sites/$domain" ] && [ -f "sites/$domain/site_config.json" ]; then
+    echo "Site $domain already exists and appears to be valid"
+    bench use $domain
+    site_exists=true
+fi
+
+# Create site if it doesn't exist
+if [ "\$site_exists" = false ]; then
+    echo "Creating new site $domain"
+    echo "$mysql_root_password" | bench new-site $domain --mariadb-root-password - --admin-password "$admin_password"
+fi
+
+# Get and install ERPNext if not already
+if [ ! -d "apps/erpnext" ]; then
+    echo "Getting ERPNext app"
+    bench get-app erpnext --branch version-15
+    
+    # Install Node.js dependencies for ERPNext
+    echo "Installing ERPNext dependencies"
+    cd apps/erpnext
+    yarn install --check-files || yarn install --network-timeout 100000
+    cd ../..
+fi
+
+# Install ERPNext on site if not already installed
+echo "Installing ERPNext on site $domain"
+bench --site $domain install-app erpnext || echo "ERPNext may already be installed on $domain"
+
+# Set as default site
+bench use $domain
+
+echo "ERPNext installation completed successfully for site $domain"
+EOF
+
+    chmod +x "/tmp/erpnext_install_${frappe_user}.sh"
+    su - "$frappe_user" -c "/tmp/erpnext_install_${frappe_user}.sh"
+    rm -f "/tmp/erpnext_install_${frappe_user}.sh"
 
     if [ $? -ne 0 ]; then
         warning "Some ERPNext installation steps may have failed"

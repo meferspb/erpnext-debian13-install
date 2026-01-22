@@ -178,7 +178,8 @@ ask_input() {
 # Validate domain name
 validate_domain() {
     local domain="$1"
-    if [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$|^[a-zA-Z0-9][a-zA-Z0-9-]*\.local$ ]]; then
+    # Allow more flexible domain formats including subdomains
+    if [[ $domain =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$|^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.local$ ]]; then
         return 0
     else
         return 1

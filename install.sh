@@ -190,7 +190,8 @@ ask_domain() {
     local domain
     while true; do
         if [ "$INSTALL_MODE" = "interactive" ]; then
-            domain=$(ask_input "Enter domain for ERPNext site" "$DEFAULT_DOMAIN")
+            read -p "Enter domain for ERPNext site [default: $DEFAULT_DOMAIN]: " -r domain_input
+            domain="${domain_input:-$DEFAULT_DOMAIN}"
         else
             domain="$DEFAULT_DOMAIN"
         fi
@@ -388,11 +389,14 @@ setup_mariadb() {
     systemctl start mariadb || error_exit "Failed to start MariaDB"
     systemctl enable mariadb || error_exit "Failed to enable MariaDB"
 
-    # Apply root password if not set
-    if mysql -u root -e "SELECT 1;" &>/dev/null 2>&1; then
-        info "Setting MariaDB root password..."
-        mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$root_password';"
-    fi
+    # Apply root password - always set it to ensure it's correct
+    info "Setting MariaDB root password..."
+    mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$root_password';" 2>/dev/null || {
+        # If password is already set, try to reset it
+        mysql -u root -p"$root_password" -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$root_password';" 2>/dev/null || {
+            warning "Could not set MariaDB root password. It may already be set."
+        }
+    }
 
     # Secure installation
     if ask_yes_no "Run MariaDB secure installation?" "y"; then

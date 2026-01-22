@@ -301,8 +301,8 @@ prepare_system() {
         apt-get upgrade -y || warning "Some packages failed to upgrade"
     fi
 
-    # Install basic utilities (software-properties-common should now be available)
-    local packages=("sudo" "curl" "git" "build-essential" "software-properties-common" "wget" "pwgen")
+    # Install basic utilities
+    local packages=("sudo" "curl" "git" "build-essential" "wget" "pwgen")
     for pkg in "${packages[@]}"; do
         install_package "$pkg"
     done

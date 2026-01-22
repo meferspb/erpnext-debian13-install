@@ -189,13 +189,15 @@ tail -f /tmp/erpnext-install.log
 tail -f /tmp/erpnext-quick-install.log
 ```
 
-#### Debian 13 Repository Issues (software-properties-common not found)
+#### Debian 13 Repository Issues
 The scripts automatically fix Debian 13 repository configuration by:
 - Installing `ca-certificates` and `debian-archive-keyring`
 - Enabling `contrib` and `non-free` components
 - Updating package lists with `--allow-releaseinfo-change`
 
-If you encounter this issue manually:
+Note: The `software-properties-common` package is Ubuntu-specific and not available in Debian. The scripts handle repository management directly without this package.
+
+If you encounter repository issues manually:
 ```bash
 # Install certificates first
 sudo apt install -y ca-certificates debian-archive-keyring
@@ -205,9 +207,6 @@ sudo sed -i 's/Components: main$/Components: main contrib non-free non-free-firm
 
 # Update package lists
 sudo apt update --allow-releaseinfo-change
-
-# Now install the package
-sudo apt install -y software-properties-common
 ```
 
 #### Database Connection Issues

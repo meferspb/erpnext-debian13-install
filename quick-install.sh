@@ -132,7 +132,7 @@ main() {
     # 1. System preparation
     log "Step 1: System preparation"
     apt update && apt upgrade -y
-    apt install -y sudo curl git build-essential software-properties-common wget pwgen
+    apt install -y sudo curl git build-essential wget pwgen
 
     # 2. Create frappe user with limited sudo
     log "Step 2: Creating frappe user"

@@ -15,16 +15,90 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/tmp/erpnext-install.log"
 MYSQL_CRED_FILE="/root/mysql_credentials.txt"
+ADMIN_CRED_FILE="/root/admin_credentials.txt"
+SECURE_DIR="/root/.erpnext-install"
 DEFAULT_DOMAIN="erp.local"
-DEFAULT_NODE_VERSION="24"
-DEFAULT_FRAPPE_USER="frappeuser"
+DEFAULT_NODE_VERSION="22"
+DEFAULT_FRAPPE_USER="frappe"
 BENCH_DIR=""
+
+# Installation mode
+INSTALL_MODE="interactive"  # interactive, quick, automated
+
+# Completed steps for rollback
+COMPLETED_STEPS=()
+
+# Load config if exists
+if [ -f "./config.sh" ]; then
+    source ./config.sh
+fi
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quick)
+            INSTALL_MODE="quick"
+            DEFAULT_DOMAIN="site1.local"
+            shift
+            ;;
+        --silent|--automated)
+            INSTALL_MODE="automated"
+            shift
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Options:"
+            echo "  --quick      Quick installation with default settings"
+            echo "  --silent     Automated installation (requires environment variables)"
+            echo "  --help       Show this help"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 # Ensure script is run as root
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root" 1>&2
    exit 1
 fi
+
+# Check system requirements
+check_requirements() {
+    log "${BLUE}=== Checking System Requirements ===${NC}"
+
+    # Check Debian version
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" != "debian" ]] || [[ "${VERSION_ID}" != "13" ]]; then
+            warning "This script is designed for Debian 13. Detected: $PRETTY_NAME"
+            if ! ask_yes_no "Continue anyway?" "n"; then
+                exit 1
+            fi
+        fi
+    fi
+
+    # Check RAM (minimum 4GB recommended)
+    local total_ram=$(free -g | awk '/^Mem:/{print $2}')
+    if [ "$total_ram" -lt 4 ]; then
+        warning "System has ${total_ram}GB RAM. Recommended: 4GB+"
+        if [ "$INSTALL_MODE" = "interactive" ] && ! ask_yes_no "Continue anyway?" "n"; then
+            exit 1
+        fi
+    fi
+
+    # Check free disk space (minimum 20GB)
+    local free_space=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+    if [ "$free_space" -lt 20 ]; then
+        error_exit "Insufficient disk space. Need 20GB+, have ${free_space}GB"
+    fi
+
+    success "System requirements check passed"
+}
 
 # Logging function
 log() {
@@ -72,6 +146,9 @@ install_package() {
 
 # Interactive yes/no prompt
 ask_yes_no() {
+    if [ "$INSTALL_MODE" = "quick" ] || [ "$INSTALL_MODE" = "automated" ]; then
+        return 0  # Default to yes for non-interactive modes
+    fi
     local question="$1"
     local default="$2"
     local answer
@@ -85,13 +162,84 @@ ask_yes_no() {
     done
 }
 
-# Interactive input with default
+# Interactive input with validation
 ask_input() {
     local question="$1"
     local default="$2"
+    if [ "$INSTALL_MODE" = "quick" ] || [ "$INSTALL_MODE" = "automated" ]; then
+        echo "$default"
+        return
+    fi
     local input
     read -p "$question [default: $default]: " input
     echo "${input:-$default}"
+}
+
+# Validate domain name
+validate_domain() {
+    local domain="$1"
+    if [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$|^[a-zA-Z0-9][a-zA-Z0-9-]*\.local$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Ask for domain with validation
+ask_domain() {
+    local domain
+    while true; do
+        domain=$(ask_input "Enter domain for ERPNext site" "$DEFAULT_DOMAIN")
+        if validate_domain "$domain"; then
+            echo "$domain"
+            return
+        else
+            warning "Invalid domain format. Please use a valid domain name."
+        fi
+    done
+}
+
+# Track completed steps for rollback
+track_step() {
+    COMPLETED_STEPS+=("$1")
+}
+
+# Rollback function
+rollback() {
+    log "${RED}Rolling back changes...${NC}"
+    for step in "${COMPLETED_STEPS[@]}"; do
+        case $step in
+            "mariadb")
+                systemctl stop mariadb 2>/dev/null || true
+                apt-get remove -y mariadb-server mariadb-client 2>/dev/null || true
+                ;;
+            "frappe_user")
+                userdel -r "$FRAPPE_USER" 2>/dev/null || true
+                ;;
+            "redis")
+                systemctl stop redis-server 2>/dev/null || true
+                apt-get remove -y redis-server 2>/dev/null || true
+                ;;
+        esac
+    done
+}
+
+# Improved error handling with rollback option
+error_exit() {
+    log "${RED}ERROR: $1${NC}" "ERROR"
+    log "${YELLOW}Installation failed. Check log at $LOG_FILE${NC}" "ERROR"
+    if [ ${#COMPLETED_STEPS[@]} -gt 0 ] && ask_yes_no "Attempt rollback of completed steps?" "y"; then
+        rollback
+    fi
+    exit 1
+}
+
+# Logging function with timestamps and levels
+log() {
+    local message="$1"
+    local level="${2:-INFO}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
 }
 
 # Step 1: System Preparation
@@ -116,36 +264,50 @@ prepare_system() {
 # Step 2: Create Frappe User
 create_frappe_user() {
     log "${BLUE}=== Step 2: Create Frappe User ===${NC}"
-    
+
     FRAPPE_USER=$(ask_input "Enter username for Frappe installation" "$DEFAULT_FRAPPE_USER")
     BENCH_DIR="/home/$FRAPPE_USER/frappe-bench"
-    
+
     if id "$FRAPPE_USER" &>/dev/null; then
         warning "User $FRAPPE_USER already exists"
     else
         info "Creating user $FRAPPE_USER..."
         adduser --disabled-password --gecos "" "$FRAPPE_USER" || error_exit "Failed to create user"
         usermod -aG sudo "$FRAPPE_USER" || error_exit "Failed to add user to sudo group"
-        
-        # Setup sudo without password for automation
-        echo "$FRAPPE_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$FRAPPE_USER"
+
+        # Setup limited sudo privileges for specific commands only
+        cat > "/etc/sudoers.d/$FRAPPE_USER" << EOF
+$FRAPPE_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/sbin/nginx, /usr/bin/supervisorctl
+EOF
         chmod 440 "/etc/sudoers.d/$FRAPPE_USER"
-        success "User $FRAPPE_USER created with sudo privileges"
+        success "User $FRAPPE_USER created with limited sudo privileges"
     fi
-    
+
+    track_step "frappe_user"
+
     # Store username for later use
     echo "$FRAPPE_USER" > /tmp/frappe_username
+}
+
+# Secure directory for credentials
+setup_secure_dir() {
+    if [ ! -d "$SECURE_DIR" ]; then
+        mkdir -p "$SECURE_DIR"
+        chmod 700 "$SECURE_DIR"
+    fi
 }
 
 # Step 3: MariaDB Setup
 setup_mariadb() {
     log "${BLUE}=== Step 3: MariaDB Setup ===${NC}"
-    
+
+    setup_secure_dir
+
     # Install MariaDB
     install_package "mariadb-server"
     install_package "mariadb-client"
     install_package "libmariadb-dev"
-    
+
     # Ask for root password or generate
     local root_password
     if [ -f "$MYSQL_CRED_FILE" ]; then
@@ -162,17 +324,17 @@ setup_mariadb() {
         chmod 600 "$MYSQL_CRED_FILE"
         success "MariaDB root password saved to $MYSQL_CRED_FILE"
     fi
-    
+
     # Start MariaDB if not running
-    systemctl start mariadb || true
-    systemctl enable mariadb || true
-    
+    systemctl start mariadb || error_exit "Failed to start MariaDB"
+    systemctl enable mariadb || error_exit "Failed to enable MariaDB"
+
     # Apply root password if not set
     if mysql -u root -e "SELECT 1;" &>/dev/null 2>&1; then
         info "Setting MariaDB root password..."
         mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$root_password';"
     fi
-    
+
     # Secure installation
     if ask_yes_no "Run MariaDB secure installation?" "y"; then
         info "Securing MariaDB installation..."
@@ -181,7 +343,7 @@ setup_mariadb() {
         mysql -u root -p"$root_password" -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
         mysql -u root -p"$root_password" -e "FLUSH PRIVILEGES;" 2>/dev/null || true
     fi
-    
+
     # Configure MariaDB for Frappe
     info "Creating MariaDB configuration for Frappe..."
     cat > /etc/mysql/mariadb.conf.d/z_frappe.cnf << 'EOF'
@@ -196,13 +358,15 @@ collation-server = utf8mb4_unicode_ci
 [mysql]
 default-character-set = utf8mb4
 EOF
-    
+
     systemctl restart mariadb || error_exit "Failed to restart MariaDB"
     success "MariaDB configured for Frappe"
-    
-    # Store root password for later use
-    echo "$root_password" > /tmp/mysql_root_password
-    chmod 600 /tmp/mysql_root_password
+
+    track_step "mariadb"
+
+    # Store root password securely
+    echo "$root_password" > "$SECURE_DIR/mysql_root_password"
+    chmod 600 "$SECURE_DIR/mysql_root_password"
 }
 
 # Step 4: Node.js Setup
@@ -210,15 +374,15 @@ setup_nodejs() {
     log "${BLUE}=== Step 4: Node.js Setup ===${NC}"
     
     echo "Select Node.js version:"
-    echo "1) Node.js 22 (LTS)"
-    echo "2) Node.js 24 (Current - Default)"
-    read -p "Enter choice [1-2, default: 2]: " node_choice
+    echo "1) Node.js 22 (LTS - Recommended)"
+    echo "2) Node.js 24 (Current)"
+    read -p "Enter choice [1-2, default: 1]: " node_choice
     
     local node_version
-    case ${node_choice:-2} in
+    case ${node_choice:-1} in
         1) node_version="22" ;;
         2) node_version="24" ;;
-        *) node_version="24" ;;
+        *) node_version="22" ;;
     esac
     
     # Check if Node.js is already installed with correct version
@@ -256,26 +420,28 @@ setup_nodejs() {
 # Step 5: Python and Redis Setup
 setup_python_redis() {
     log "${BLUE}=== Step 5: Python and Redis Setup ===${NC}"
-    
+
     # Install Python dependencies
     local python_packages=("python3-dev" "python3-venv" "python3-pip" "python3-setuptools")
     for pkg in "${python_packages[@]}"; do
         install_package "$pkg"
     done
-    
+
     # Install Redis
     install_package "redis-server"
-    
+
     # Install other dependencies
     local other_packages=("xvfb" "libfontconfig" "wkhtmltopdf" "libssl-dev" "libcrypto++-dev" "nginx")
     for pkg in "${other_packages[@]}"; do
         install_package "$pkg"
     done
-    
+
     # Enable and start Redis
-    systemctl enable redis-server || true
+    systemctl enable redis-server || error_exit "Failed to enable Redis"
     systemctl start redis-server || error_exit "Failed to start Redis"
-    
+
+    track_step "redis"
+
     success "Python and Redis setup complete"
 }
 
@@ -311,17 +477,62 @@ EOFUSER
     success "Frappe Bench installed"
 }
 
+# Test services function
+test_services() {
+    log "${BLUE}=== Testing Services ===${NC}"
+
+    # Test MariaDB
+    local mysql_root_password=$(cat "$SECURE_DIR/mysql_root_password")
+    if mysql -u root -p"$mysql_root_password" -e "SELECT 1;" &>/dev/null; then
+        success "MariaDB connection test passed"
+    else
+        error_exit "MariaDB test failed"
+    fi
+
+    # Test Redis
+    if redis-cli ping | grep -q "PONG"; then
+        success "Redis test passed"
+    else
+        warning "Redis test failed"
+    fi
+
+    # Test ERPNext site
+    local domain=$(cat /tmp/erpnext_domain 2>/dev/null || echo "$DEFAULT_DOMAIN")
+    local frappe_user=$(cat /tmp/frappe_username)
+    su - "$frappe_user" << EOFUSER
+        export PATH=\$PATH:\$HOME/.local/bin
+        cd frappe-bench
+        if bench --site $domain doctor &>/dev/null; then
+            echo "ERPNext site $domain is healthy"
+        else
+            echo "Warning: ERPNext site test failed"
+        fi
+EOFUSER
+}
+
 # Step 7: ERPNext Installation
 install_erpnext() {
     log "${BLUE}=== Step 7: ERPNext Installation ===${NC}"
-    
+
     local frappe_user=$(cat /tmp/frappe_username)
-    local mysql_root_password=$(cat /tmp/mysql_root_password)
-    local domain=$(ask_input "Enter domain for ERPNext site" "$DEFAULT_DOMAIN")
-    
+    local mysql_root_password=$(cat "$SECURE_DIR/mysql_root_password")
+    local domain
+
+    if [ "$INSTALL_MODE" = "interactive" ]; then
+        domain=$(ask_domain)
+    else
+        domain="$DEFAULT_DOMAIN"
+    fi
+
+    # Generate random admin password
+    local admin_password=$(pwgen -s 16 1)
+    echo "ERPNext admin password: $admin_password" > "$ADMIN_CRED_FILE"
+    chmod 600 "$ADMIN_CRED_FILE"
+    success "Admin credentials saved to $ADMIN_CRED_FILE"
+
     # Store domain for later use
     echo "$domain" > /tmp/erpnext_domain
-    
+
     # Create site and install ERPNext
     su - "$frappe_user" << EOFUSER
         export PATH=\$PATH:\$HOME/.local/bin
@@ -331,8 +542,8 @@ install_erpnext() {
         if [ -d "sites/$domain" ]; then
             echo "Site $domain already exists"
         else
-            # Create new site
-            bench new-site $domain --mariadb-root-password '$mysql_root_password' --admin-password admin
+            # Create new site with secure password transmission
+            echo "$mysql_root_password" | bench new-site $domain --mariadb-root-password - --admin-password "$admin_password"
         fi
         
         # Get and install ERPNext if not already
@@ -346,12 +557,13 @@ install_erpnext() {
         # Set as default site
         bench use $domain
 EOFUSER
-    
+
     if [ $? -ne 0 ]; then
         warning "Some ERPNext installation steps may have failed"
+    else
+        success "ERPNext installed on site $domain"
+        test_services
     fi
-    
-    success "ERPNext installed on site $domain"
 }
 
 # Step 8: Additional Frappe Apps Selection
@@ -506,7 +718,8 @@ show_menu() {
 full_installation() {
     log "${GREEN}Starting full ERPNext/Frappe installation...${NC}"
     log "Log file: $LOG_FILE"
-    
+
+    check_requirements
     prepare_system
     create_frappe_user
     setup_mariadb
@@ -517,7 +730,7 @@ full_installation() {
     select_additional_apps
     setup_production
     setup_firewall
-    
+
     show_completion_message
 }
 
@@ -543,26 +756,39 @@ step_by_step_installation() {
 show_completion_message() {
     local domain=$(cat /tmp/erpnext_domain 2>/dev/null || echo "$DEFAULT_DOMAIN")
     local frappe_user=$(cat /tmp/frappe_username 2>/dev/null || echo "$DEFAULT_FRAPPE_USER")
-    
+    local admin_password="admin"
+
+    # Try to get actual admin password
+    if [ -f "$ADMIN_CRED_FILE" ]; then
+        admin_password=$(grep "admin password" "$ADMIN_CRED_FILE" | awk '{print $NF}' 2>/dev/null || echo "admin")
+    fi
+
     log ""
     log "${GREEN}=========================================="
     log "  Installation Complete!"
     log "==========================================${NC}"
     log ""
-    log "${BLUE}Next steps:${NC}"
-    log "1. Access ERPNext at: http://$domain"
-    log "2. Default admin password: admin (change it!)"
-    log "3. MariaDB root password is stored in: $MYSQL_CRED_FILE"
-    log "4. Frappe user: $frappe_user"
-    log "5. Bench directory: /home/$frappe_user/frappe-bench"
+    log "${BLUE}Access Information:${NC}"
+    log "• ERPNext URL: http://$domain"
+    log "• Admin Username: administrator"
+    log "• Admin Password: $admin_password"
+    log "• MariaDB root password saved in: $MYSQL_CRED_FILE"
+    log "• Frappe user: $frappe_user"
+    log "• Bench directory: /home/$frappe_user/frappe-bench"
     log ""
     log "${YELLOW}Security recommendations:${NC}"
-    log "- Change default admin password"
-    log "- Setup SSL with Let's Encrypt: bench setup add-domain $domain --ssl-certificate"
-    log "- Configure Fail2Ban for protection"
-    log "- Disable root SSH login"
+    log "• Change the default admin password immediately"
+    log "• Setup SSL with Let's Encrypt: bench setup add-domain $domain --ssl-certificate"
+    log "• Configure Fail2Ban for protection"
+    log "• Disable root SSH login"
+    log "• Review firewall settings"
     log ""
-    
+    log "${BLUE}Useful commands:${NC}"
+    log "• Start bench: su - $frappe_user -c 'cd frappe-bench && bench start'"
+    log "• Stop bench: su - $frappe_user -c 'cd frappe-bench && bench stop'"
+    log "• View logs: tail -f /tmp/erpnext-install.log"
+    log ""
+
     cleanup
 }
 

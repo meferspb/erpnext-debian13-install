@@ -50,6 +50,42 @@ if [[ $EUID -ne 0 ]]; then
    error_exit "This script must be run as root"
 fi
 
+# Fix Debian 13 repository configuration
+fix_debian_repositories() {
+    log "Fixing Debian 13 repository configuration..."
+
+    # Install basic certificates first
+    apt-get install -y --no-install-recommends ca-certificates debian-archive-keyring 2>/dev/null || true
+
+    # Check if we're on Debian 13 and fix sources
+    . /etc/os-release
+    if [[ "$ID" == "debian" && "${VERSION_ID}" == "13" ]]; then
+        # Check if using new .sources format
+        if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+            # Backup original
+            cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.backup 2>/dev/null || true
+
+            # Ensure contrib and non-free are enabled
+            if ! grep -q "contrib" /etc/apt/sources.list.d/debian.sources; then
+                sed -i 's/Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+                success "Added contrib and non-free components to debian.sources"
+            fi
+        elif [ -f /etc/apt/sources.list ]; then
+            # Backup original
+            cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
+
+            # Ensure contrib and non-free are enabled
+            if ! grep -q "contrib" /etc/apt/sources.list; then
+                sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+                success "Added contrib and non-free components to sources.list"
+            fi
+        fi
+
+        # Force update package lists
+        apt-get update --allow-releaseinfo-change || apt-get update || warning "Failed to update package lists"
+    fi
+}
+
 # Check system requirements
 check_requirements() {
     log "Checking system requirements..."
@@ -86,6 +122,9 @@ setup_secure_dir() {
 # Main installation function
 main() {
     log "Starting quick ERPNext installation on Debian 13"
+
+    # Fix repositories first (critical for Debian 13)
+    fix_debian_repositories
 
     check_requirements
     setup_secure_dir

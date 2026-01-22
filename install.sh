@@ -242,22 +242,71 @@ log() {
     echo -e "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
 }
 
+# Fix Debian 13 repository configuration
+fix_debian_repositories() {
+    log "${BLUE}=== Fixing Debian 13 Repository Configuration ===${NC}"
+
+    # Install basic certificates first
+    info "Installing basic certificates and keys..."
+    apt-get install -y --no-install-recommends ca-certificates debian-archive-keyring 2>/dev/null || true
+
+    # Check if we're on Debian 13 and fix sources
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" == "debian" && "${VERSION_ID}" == "13" ]]; then
+            info "Detected Debian 13, checking repository configuration..."
+
+            # Check if using new .sources format
+            if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+                info "Updating debian.sources format..."
+                # Backup original
+                cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.backup 2>/dev/null || true
+
+                # Ensure contrib and non-free are enabled
+                if ! grep -q "contrib" /etc/apt/sources.list.d/debian.sources; then
+                    sed -i 's/Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+                    success "Added contrib and non-free components to debian.sources"
+                fi
+            elif [ -f /etc/apt/sources.list ]; then
+                info "Updating sources.list format..."
+                # Backup original
+                cp /etc/apt/sources.list /etc/apt/sources.list.backup 2>/dev/null || true
+
+                # Ensure contrib and non-free are enabled
+                if ! grep -q "contrib" /etc/apt/sources.list; then
+                    sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+                    success "Added contrib and non-free components to sources.list"
+                fi
+            fi
+
+            # Force update package lists
+            info "Updating package lists with new repositories..."
+            apt-get update --allow-releaseinfo-change || apt-get update || warning "Failed to update package lists"
+        fi
+    fi
+
+    success "Repository configuration fixed"
+}
+
 # Step 1: System Preparation
 prepare_system() {
     log "${BLUE}=== Step 1: System Preparation ===${NC}"
-    
+
+    # Fix repositories first (especially important for Debian 13)
+    fix_debian_repositories
+
     if ask_yes_no "Update system packages?" "y"; then
         info "Updating package lists..."
         apt-get update || error_exit "Failed to update package lists"
         apt-get upgrade -y || warning "Some packages failed to upgrade"
     fi
-    
-    # Install basic utilities
+
+    # Install basic utilities (software-properties-common should now be available)
     local packages=("sudo" "curl" "git" "build-essential" "software-properties-common" "wget" "pwgen")
     for pkg in "${packages[@]}"; do
         install_package "$pkg"
     done
-    
+
     success "System preparation complete"
 }
 

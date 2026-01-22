@@ -189,7 +189,19 @@ EOF
     # 5. Python and dependencies
     log "Step 5: Python and dependencies"
     apt install -y python3-dev python3-venv python3-pip redis-server \
-        xvfb libfontconfig wkhtmltopdf libssl-dev libcrypto++-dev nginx
+        xvfb libfontconfig libssl-dev libcrypto++-dev nginx
+
+    # Try to install wkhtmltopdf, but don't fail if not available
+    log "Installing wkhtmltopdf (if available)..."
+    if apt install -y wkhtmltopdf 2>/dev/null; then
+        success "wkhtmltopdf installed"
+    else
+        warning "wkhtmltopdf not available in repositories, skipping (PDF generation may not work)"
+        # Try to install from backports if available
+        if apt install -y -t trixie-backports wkhtmltopdf 2>/dev/null; then
+            success "wkhtmltopdf installed from backports"
+        fi
+    fi
 
     systemctl enable --now redis-server
 

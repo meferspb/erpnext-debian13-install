@@ -480,7 +480,20 @@ setup_python_redis() {
     install_package "redis-server"
 
     # Install other dependencies
-    local other_packages=("xvfb" "libfontconfig" "wkhtmltopdf" "libssl-dev" "libcrypto++-dev" "nginx")
+    local other_packages=("xvfb" "libfontconfig" "libssl-dev" "libcrypto++-dev" "nginx")
+
+    # Try to install wkhtmltopdf, but don't fail if not available
+    info "Installing wkhtmltopdf (if available)..."
+    if apt-get install -y wkhtmltopdf 2>/dev/null; then
+        success "wkhtmltopdf installed"
+    else
+        warning "wkhtmltopdf not available in repositories, skipping (PDF generation may not work)"
+        # Try to install from backports if available
+        if apt-get install -y -t trixie-backports wkhtmltopdf 2>/dev/null; then
+            success "wkhtmltopdf installed from backports"
+        fi
+    fi
+
     for pkg in "${other_packages[@]}"; do
         install_package "$pkg"
     done

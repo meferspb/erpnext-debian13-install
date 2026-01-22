@@ -209,6 +209,19 @@ sudo sed -i 's/Components: main$/Components: main contrib non-free non-free-firm
 sudo apt update --allow-releaseinfo-change
 ```
 
+#### wkhtmltopdf Not Available
+The `wkhtmltopdf` package may not be available in Debian 13 repositories. The scripts will attempt to install it, but if it's not found, the installation will continue with a warning. PDF generation features in ERPNext may not work without this package.
+
+To install wkhtmltopdf manually if needed:
+```bash
+# Try from backports
+sudo apt install -y -t trixie-backports wkhtmltopdf
+
+# Or download from wkhtmltopdf.org and install manually
+wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_amd64.deb
+sudo dpkg -i wkhtmltox_0.12.6.1-3.bookworm_amd64.deb
+```
+
 #### Database Connection Issues
 ```bash
 # Test MariaDB connection

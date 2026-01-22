@@ -189,12 +189,22 @@ validate_domain() {
 ask_domain() {
     local domain
     while true; do
-        domain=$(ask_input "Enter domain for ERPNext site" "$DEFAULT_DOMAIN")
+        if [ "$INSTALL_MODE" = "interactive" ]; then
+            domain=$(ask_input "Enter domain for ERPNext site" "$DEFAULT_DOMAIN")
+        else
+            domain="$DEFAULT_DOMAIN"
+        fi
         if validate_domain "$domain"; then
             echo "$domain"
             return
         else
-            warning "Invalid domain format. Please use a valid domain name."
+            if [ "$INSTALL_MODE" = "interactive" ]; then
+                warning "Invalid domain format. Please use a valid domain name."
+            else
+                warning "Using default domain $DEFAULT_DOMAIN due to invalid format"
+                echo "$DEFAULT_DOMAIN"
+                return
+            fi
         fi
     done
 }
@@ -615,11 +625,16 @@ install_erpnext() {
         # Get and install ERPNext if not already
         if [ ! -d "apps/erpnext" ]; then
             bench get-app erpnext --branch version-15
+
+            # Install Node.js dependencies for ERPNext
+            cd apps/erpnext
+            yarn install --check-files || yarn install --network-timeout 100000
+            cd ../..
         fi
-        
+
         # Install ERPNext on site
         bench --site $domain install-app erpnext || echo "ERPNext may already be installed"
-        
+
         # Set as default site
         bench use $domain
 EOFUSER

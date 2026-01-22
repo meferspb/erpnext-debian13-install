@@ -610,34 +610,8 @@ install_erpnext() {
     echo "$domain" > /tmp/erpnext_domain
 
     # Create site and install ERPNext
-    su - "$frappe_user" << EOFUSER
-        export PATH=\$PATH:\$HOME/.local/bin
-        cd frappe-bench
-        
-        # Check if site exists
-        if [ -d "sites/$domain" ]; then
-            echo "Site $domain already exists"
-        else
-            # Create new site with secure password transmission
-            echo "$mysql_root_password" | bench new-site $domain --mariadb-root-password - --admin-password "$admin_password"
-        fi
-        
-        # Get and install ERPNext if not already
-        if [ ! -d "apps/erpnext" ]; then
-            bench get-app erpnext --branch version-15
-
-            # Install Node.js dependencies for ERPNext
-            cd apps/erpnext
-            yarn install --check-files || yarn install --network-timeout 100000
-            cd ../..
-        fi
-
-        # Install ERPNext on site
-        bench --site $domain install-app erpnext || echo "ERPNext may already be installed"
-
-        # Set as default site
-        bench use $domain
-EOFUSER
+    # Use printf to avoid heredoc variable expansion issues
+    printf 'export PATH=$PATH:$HOME/.local/bin\ncd frappe-bench\n\n# Check if site exists\nif [ -d "sites/%s" ]; then\n    echo "Site %s already exists"\nelse\n    # Create new site with secure password transmission\n    echo "%s" | bench new-site %s --mariadb-root-password - --admin-password "%s"\nfi\n\n# Get and install ERPNext if not already\nif [ ! -d "apps/erpnext" ]; then\n    bench get-app erpnext --branch version-15\n    \n    # Install Node.js dependencies for ERPNext\n    cd apps/erpnext\n    yarn install --check-files || yarn install --network-timeout 100000\n    cd ../..\nfi\n\n# Install ERPNext on site\nbench --site %s install-app erpnext || echo "ERPNext may already be installed"\n\n# Set as default site\nbench use %s\n' "$mysql_root_password" "$domain" "$domain" "$mysql_root_password" "$domain" "$admin_password" "$domain" "$domain" | su - "$frappe_user" /bin/bash
 
     if [ $? -ne 0 ]; then
         warning "Some ERPNext installation steps may have failed"

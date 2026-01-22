@@ -10,7 +10,7 @@ Complete installation scripts for ERPNext on Debian 13 with enhanced security, m
 
 ### Simple Installation (Recommended)
 ```bash
-# Download and run the quick installation script
+# Download and make the quick installation script executable
 wget https://raw.githubusercontent.com/your-repo/erpnext-debian13-install/main/quick-install.sh
 chmod +x quick-install.sh
 sudo ./quick-install.sh
@@ -18,7 +18,7 @@ sudo ./quick-install.sh
 
 ### Advanced Installation (Interactive)
 ```bash
-# Download and run the full installation script
+# Download and make the full installation script executable
 wget https://raw.githubusercontent.com/your-repo/erpnext-debian13-install/main/install.sh
 chmod +x install.sh
 sudo ./install.sh

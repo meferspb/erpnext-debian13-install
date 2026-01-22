@@ -1,8 +1,11 @@
 #!/bin/bash
-set -euo pipefail
 
 # ERPNext/Frappe Installation Script for Debian 13
 # Interactive menu-driven installer with safety checks and rollback options
+
+# Exit on error, but allow controlled error handling
+set -Euo pipefail
+trap 'error_exit "Script failed at line $LINENO with exit code $?"' ERR
 
 # Colors for output
 RED='\033[0;31m'
@@ -11,7 +14,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration variables
+# Configuration variables with validation
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/tmp/erpnext-install.log"
 MYSQL_CRED_FILE="/root/mysql_credentials.txt"
@@ -26,12 +29,35 @@ BENCH_DIR=""
 INSTALL_MODE="interactive"  # interactive, quick, automated
 
 # Completed steps for rollback
-COMPLETED_STEPS=()
+declare -a COMPLETED_STEPS=()
 
-# Load config if exists
+# Load config if exists with error handling
 if [ -f "./config.sh" ]; then
-    source ./config.sh
+    if ! source "./config.sh"; then
+        warning "Failed to load config.sh, using defaults"
+    fi
 fi
+
+# Validate critical variables
+validate_critical_vars() {
+    # Ensure log file is writable
+    if ! touch "$LOG_FILE" 2>/dev/null; then
+        echo "ERROR: Cannot write to log file $LOG_FILE" >&2
+        exit 1
+    fi
+
+    # Ensure secure directory exists and is secure
+    if [ ! -d "$SECURE_DIR" ]; then
+        mkdir -p "$SECURE_DIR" 2>/dev/null || {
+            echo "ERROR: Cannot create secure directory $SECURE_DIR" >&2
+            exit 1
+        }
+        chmod 700 "$SECURE_DIR" 2>/dev/null
+    fi
+}
+
+# Call validation
+validate_critical_vars
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

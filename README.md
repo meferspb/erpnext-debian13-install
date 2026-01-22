@@ -209,6 +209,24 @@ sudo sed -i 's/Components: main$/Components: main contrib non-free non-free-firm
 sudo apt update --allow-releaseinfo-change
 ```
 
+#### Yarn Registry Issues
+The scripts automatically configure Yarn to use the npm registry instead of the default Yarn registry to avoid network connectivity issues:
+
+```bash
+yarn config set registry https://registry.npmjs.org/
+yarn cache clean
+```
+
+If you encounter yarn install errors manually:
+```bash
+# Clear yarn cache and set npm registry
+yarn cache clean
+yarn config set registry https://registry.npmjs.org/
+
+# Retry installation
+yarn install
+```
+
 #### wkhtmltopdf Not Available
 The `wkhtmltopdf` package may not be available in Debian 13 repositories. The scripts will attempt to install it, but if it's not found, the installation will continue with a warning. PDF generation features in ERPNext may not work without this package.
 

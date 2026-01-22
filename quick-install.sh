@@ -212,6 +212,11 @@ export PATH=$PATH:$HOME/.local/bin
 pip3 install --user frappe-bench --break-system-packages
 echo 'export PATH=$PATH:$HOME/.local/bin' >> ~/.bashrc
 source ~/.bashrc
+
+# Configure yarn to use npm registry to avoid network issues
+yarn config set registry https://registry.npmjs.org/
+yarn cache clean
+
 bench init frappe-bench --frappe-branch version-15 --python python3
 EOF
 

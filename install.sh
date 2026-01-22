@@ -510,20 +510,24 @@ setup_python_redis() {
 # Step 6: Frappe Bench Installation
 install_frappe_bench() {
     log "${BLUE}=== Step 6: Frappe Bench Installation ===${NC}"
-    
+
     local frappe_user=$(cat /tmp/frappe_username)
-    
+
     # Switch to frappe user and install bench
     su - "$frappe_user" << 'EOFUSER'
         # Install frappe-bench
         pip3 install --user frappe-bench --break-system-packages 2>/dev/null || pip3 install --user frappe-bench
-        
+
         # Add to PATH
         if ! grep -q '.local/bin' ~/.bashrc; then
             echo 'export PATH=$PATH:$HOME/.local/bin' >> ~/.bashrc
         fi
         export PATH=$PATH:$HOME/.local/bin
-        
+
+        # Configure yarn to use npm registry to avoid network issues
+        yarn config set registry https://registry.npmjs.org/
+        yarn cache clean
+
         # Initialize bench if not exists
         if [ ! -d "frappe-bench" ]; then
             bench init frappe-bench --frappe-branch version-15 --python python3
@@ -531,11 +535,11 @@ install_frappe_bench() {
             echo "Bench directory already exists, skipping initialization"
         fi
 EOFUSER
-    
+
     if [ $? -ne 0 ]; then
         error_exit "Failed to install Frappe Bench"
     fi
-    
+
     success "Frappe Bench installed"
 }
 

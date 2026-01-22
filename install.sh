@@ -666,14 +666,21 @@ fi
 # Create site if it doesn't exist
 if [ "\$site_exists" = false ]; then
     echo "Creating new site $domain"
-    echo "$mysql_root_password" | bench new-site $domain --mariadb-root-password - --admin-password "$admin_password"
+    # Test MariaDB connection first
+    if mysql -u root -p"$mysql_root_password" -e "SELECT 1;" >/dev/null 2>&1; then
+        echo "MariaDB connection test passed"
+        bench new-site $domain --mariadb-root-password "$mysql_root_password" --admin-password "$admin_password"
+    else
+        echo "ERROR: Cannot connect to MariaDB with root password"
+        exit 1
+    fi
 fi
 
 # Get and install ERPNext if not already
 if [ ! -d "apps/erpnext" ]; then
     echo "Getting ERPNext app"
     bench get-app erpnext --branch version-15
-    
+
     # Install Node.js dependencies for ERPNext
     echo "Installing ERPNext dependencies"
     cd apps/erpnext
